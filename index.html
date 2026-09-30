@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1f2937">
+<title>Job Time Tracker</title>
+<style>
+:root{--bg:#f3f4f6;--card:#fff;--text:#111827;--muted:#6b7280;--line:#d1d5db;--blue:#2563eb;--green:#15803d;--orange:#ea580c;--red:#dc2626}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--text)}
+header{background:#1f2937;color:white;padding:16px;position:sticky;top:0;z-index:5}
+header h1{margin:0;font-size:22px}.sub{font-size:13px;color:#d1d5db;margin-top:4px}
+main{max-width:800px;margin:auto;padding:14px 14px 90px}.card{background:#fff;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 1px 4px #0001}
+h2{font-size:18px;margin:0 0 12px}.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:130px}
+input,button{font:inherit;border-radius:8px;padding:11px;border:1px solid var(--line)}button{border:0;color:white;font-weight:700;cursor:pointer;background:var(--blue)}
+button.secondary{background:#4b5563}button.green{background:var(--green)}button.orange{background:var(--orange)}button.red{background:var(--red)}button:disabled{opacity:.5;cursor:not-allowed}
+.status{padding:12px;border-radius:9px;background:#eff6ff;border:1px solid #bfdbfe;margin-bottom:12px}.status strong{display:block;font-size:16px}.status span{font-size:13px;color:var(--muted)}
+.bigtime{font-size:34px;font-weight:700;text-align:center;margin:10px 0}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:#f9fafb;border-radius:9px;padding:10px;text-align:center}.stat b{display:block;font-size:19px}.stat span{font-size:11px;color:var(--muted)}
+.job{border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:9px}.jobhead{display:flex;justify-content:space-between;gap:8px}
+.jobname{font-weight:700}.pill{font-size:11px;padding:4px 7px;border-radius:99px;background:#e5e7eb;white-space:nowrap}
+.details{font-size:13px;color:var(--muted);margin-top:7px;line-height:1.5}.actions{display:flex;gap:7px;margin-top:9px}.actions button{flex:1;padding:9px;font-size:13px}
+.empty{text-align:center;color:var(--muted);padding:18px}.small{font-size:12px;color:var(--muted)}.notice{background:#fff7ed;border:1px solid #fed7aa;padding:10px;border-radius:8px;font-size:13px;margin-top:10px}
+.recovery{background:#fef2f2;border:1px solid #fecaca;padding:10px;border-radius:8px;font-size:13px;margin-top:10px}
+@media(max-width:520px){main{padding:10px 10px 80px}.stats{grid-template-columns:1fr 1fr}.stats .stat:last-child{grid-column:span 2}}
+</style>
+</head>
+<body>
+<header>
+<h1>Job Time Tracker</h1><div class="sub" id="dateLabel"></div>
+</header>
+<main>
+<section class="card">
+<div class="status"><strong id="statusTitle">Ready</strong><span id="statusText">Choose a job to get started.</span></div>
+<div class="bigtime" id="liveTimer">00:00:00</div>
+<div class="row">
+<button id="startJobBtn" class="green">Start Job</button>
+<button id="startTravelBtn" class="orange" disabled>Leave / Start Travel</button>
+<button id="arriveBtn" disabled>Arrive at Next Job</button>
+</div>
+<div class="notice">The app saves exact timestamps. You can lock your phone, make calls, text, or use other apps. When you return, the elapsed time is calculated from the saved timestamps.</div>
+<div id="recoveryBox" class="recovery" style="display:none"></div>
+</section>
+
+<section class="card">
+<h2>Current / Next Job</h2>
+<div class="row"><input id="jobName" placeholder="Job name or customer"><input id="jobNumber" placeholder="Job # (optional)"></div>
+<div class="row" style="margin-top:8px"><button id="setNextBtn" class="secondary">Set Next Job</button><button id="endDayBtn" class="red">End Day & Save</button></div>
+</section>
+
+<section class="card">
+<h2>Today's Totals</h2>
+<div class="stats">
+<div class="stat"><b id="totalJob">0:00</b><span>Job time</span></div>
+<div class="stat"><b id="totalTravel">0:00</b><span>Travel time</span></div>
+<div class="stat"><b id="totalPaid">0:00</b><span>Total paid time</span></div>
+</div>
+</section>
+
+<section class="card">
+<h2>Saved Days</h2>
+<div class="row">
+<input id="weekStart" type="date">
+<button id="weekExportBtn" class="secondary">Export Week CSV</button>
+</div>
+<div id="savedDays" class="empty">No completed days saved yet.</div>
+</section>
+
+<section class="card">
+<h2>Today's Jobs</h2>
+<div id="jobsList" class="empty">No jobs recorded yet.</div>
+<div class="row" style="margin-top:12px"><button id="exportBtn">Export Day as CSV</button><button id="clearBtn" class="secondary">Clear Day</button></div>
+</section>
+</main>
+
+<script>
+const KEY='job-time-tracker-v2';
+let state=load();
+
+function todayKey(){return new Date().toISOString().slice(0,10)}
+function load(){
+  try{
+    const raw=localStorage.getItem(KEY);
+    if(raw){const s=JSON.parse(raw);if(s.date===todayKey()){s.archived=s.archived||[];return s;}}
+  }catch(e){}
+  return {date:todayKey(),jobs:[],current:null,nextJob:null,archived:[]};
+}
+function save(){localStorage.setItem(KEY,JSON.stringify(state))}
+function now(){return Date.now()}
+function fmt(ms){
+  ms=Math.max(0,Number(ms)||0);let t=Math.floor(ms/1000),h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60;
+  return (h?String(h).padStart(2,'0')+':':'')+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+}
+function curJob(){return state.current?.jobId?state.jobs.find(j=>j.id===state.current.jobId):null}
+function elapsedForCurrent(){
+  return state.current?Math.max(0,now()-state.current.startedAt):0;
+}
+function totals(){
+  let job=0,travel=0;
+  state.jobs.forEach(j=>{job+=j.workMs||0;travel+=j.travelMs||0});
+  if(state.current){
+    if(state.current.type==='job') job+=elapsedForCurrent();
+    if(state.current.type==='travel') travel+=elapsedForCurrent();
+  }
+  return {job,travel};
+}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function render(){
+  document.getElementById('dateLabel').textContent=new Date(state.date+'T12:00:00').toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  const cur=curJob();
+  let title='Ready',text=state.nextJob?'Next job: '+state.nextJob.name:'Choose a job to get started.';
+  if(state.current?.type==='job'){title='Working: '+(cur?.name||'Job');text='Job time is running. The timestamp is saved.'}
+  if(state.current?.type==='travel'){title='Traveling to '+(state.nextJob?.name||'next job');text='Travel time is running and will be assigned to the job you arrive at.'}
+  document.getElementById('statusTitle').textContent=title;
+  document.getElementById('statusText').textContent=text;
+  document.getElementById('startJobBtn').disabled=!!state.current||!state.nextJob;
+  document.getElementById('startTravelBtn').disabled=state.current?.type!=='job';
+  document.getElementById('arriveBtn').disabled=state.current?.type!=='travel';
+  document.getElementById('startJobBtn').textContent=state.nextJob?'Start '+state.nextJob.name:'Start Job';
+  document.getElementById('liveTimer').textContent=state.current?fmt(elapsedForCurrent()):'00:00:00';
+
+  const t=totals();
+  document.getElementById('totalJob').textContent=fmt(t.job);
+  document.getElementById('totalTravel').textContent=fmt(t.travel);
+  document.getElementById('totalPaid').textContent=fmt(t.job+t.travel);
+
+  const rb=document.getElementById('recoveryBox');
+  if(state.current){
+    rb.style.display='block';
+    rb.textContent='Active timer started '+new Date(state.current.startedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'. It will continue correctly even if this page is in the background or the phone is locked.';
+  }else rb.style.display='none';
+  renderJobs();renderSavedDays();save();
+}
+function renderSavedDays(){
+  const box=document.getElementById('savedDays');
+  const days=(state.archived||[]).slice().sort((a,b)=>b.date.localeCompare(a.date));
+  if(!days.length){box.className='empty';box.textContent='No completed days saved yet.';return}
+  box.className='';
+  box.innerHTML=days.map(d=>{
+    const total=d.jobs.reduce((x,j)=>x+(j.workMs||0)+(j.travelMs||0),0);
+    return `<div class="job"><div class="jobhead"><div class="jobname">${new Date(d.date+'T12:00:00').toLocaleDateString(undefined,{weekday:'short',year:'numeric',month:'short',day:'numeric'})}</div><span class="pill">${fmt(total)}</span></div>
+    <div class="details">${d.jobs.length} job${d.jobs.length===1?'':'s'} · Work: ${fmt(d.jobs.reduce((x,j)=>x+(j.workMs||0),0))} · Travel: ${fmt(d.jobs.reduce((x,j)=>x+(j.travelMs||0),0))}</div></div>`;
+  }).join('');
+}
+function renderJobs(){
+  const box=document.getElementById('jobsList');
+  if(!state.jobs.length){box.className='empty';box.textContent='No jobs recorded yet.';return}
+  box.className='';
+  box.innerHTML=state.jobs.map(j=>{
+    let live=state.current?.jobId===j.id&&state.current.type==='job'?elapsedForCurrent():0;
+    return `<div class="job"><div class="jobhead"><div class="jobname">${esc(j.name)} ${j.number?'<span class="small">#'+esc(j.number)+'</span>':''}</div>
+    <span class="pill">${fmt((j.workMs||0)+(j.travelMs||0)+live)}</span></div>
+    <div class="details">Work: <b>${fmt((j.workMs||0)+live)}</b> &nbsp; Travel added: <b>${fmt(j.travelMs||0)}</b><br>
+    Started: ${j.startedAt?new Date(j.startedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'—'}
+    ${j.endedAt?' · Finished: '+new Date(j.endedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):''}</div>
+    <div class="actions"><button class="secondary" onclick="editJob('${j.id}')">Edit</button><button class="red" onclick="deleteJob('${j.id}')">Delete</button></div></div>`;
+  }).join('');
+}
+
+document.getElementById('setNextBtn').onclick=()=>{
+  const name=document.getElementById('jobName').value.trim(),number=document.getElementById('jobNumber').value.trim();
+  if(!name){alert('Enter a job name or customer.');return}
+  state.nextJob={name,number};render();document.getElementById('jobName').value='';document.getElementById('jobNumber').value='';
+};
+
+document.getElementById('startJobBtn').onclick=()=>{
+  if(!state.nextJob||state.current)return;
+  const id=crypto.randomUUID();
+  state.jobs.push({id,name:state.nextJob.name,number:state.nextJob.number||'',workMs:0,travelMs:state.pendingTravel||0,startedAt:now(),endedAt:null});
+  state.current={type:'job',jobId:id,startedAt:now()};
+  state.pendingTravel=0;state.nextJob=null;render();
+};
+
+document.getElementById('startTravelBtn').onclick=()=>{
+  if(state.current?.type!=='job')return;
+  const j=curJob(),end=now();
+  j.workMs=(j.workMs||0)+(end-state.current.startedAt);
+  j.endedAt=end;
+  state.current={type:'travel',startedAt:end,fromJobId:j.id};
+  render();
+};
+
+document.getElementById('arriveBtn').onclick=()=>{
+  if(state.current?.type!=='travel')return;
+  const end=now(),travel=end-state.current.startedAt;
+  state.pendingTravel=travel;state.current=null;
+  if(state.nextJob){
+    const id=crypto.randomUUID();
+    state.jobs.push({id,name:state.nextJob.name,number:state.nextJob.number||'',workMs:0,travelMs:travel,startedAt:end,endedAt:null});
+    state.current={type:'job',jobId:id,startedAt:end};state.nextJob=null;state.pendingTravel=0;
+  }
+  render();
+};
+
+document.getElementById('endDayBtn').onclick=()=>{
+  if(state.current){alert('Stop the current job/travel timer before ending the day.');return}
+  if(!state.jobs.length){alert('There are no jobs to save for this day.');return}
+  const chosen=prompt('Date to save this workday (YYYY-MM-DD):',state.date);
+  if(chosen===null)return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(chosen)){alert('Please use YYYY-MM-DD.');return}
+  state.archived=state.archived||[];
+  state.archived=state.archived.filter(d=>d.date!==chosen);
+  state.archived.push({date:chosen,jobs:JSON.parse(JSON.stringify(state.jobs))});
+  state.date=todayKey();state.jobs=[];state.current=null;state.nextJob=null;state.pendingTravel=0;
+  render();
+  alert('Day saved. You can export it later with the weekly CSV.');
+};
+document.getElementById('clearBtn').onclick=()=>{
+  if(confirm('Delete all jobs and times for today?')){state={date:todayKey(),jobs:[],current:null,nextJob:null};render();}
+};
+
+function editJob(id){
+  const j=state.jobs.find(x=>x.id===id);if(!j)return;
+  if(state.current?.jobId===id){alert('Stop the active job before manually editing it.');return}
+  const w=prompt('Work minutes for '+j.name,Math.round((j.workMs||0)/60000));if(w===null)return;
+  const tr=prompt('Travel minutes assigned to '+j.name,Math.round((j.travelMs||0)/60000));if(tr===null)return;
+  j.workMs=Math.max(0,Number(w)||0)*60000;j.travelMs=Math.max(0,Number(tr)||0)*60000;render();
+}
+function deleteJob(id){
+  if(!confirm('Delete this job?'))return;
+  if(state.current?.jobId===id)state.current=null;
+  state.jobs=state.jobs.filter(j=>j.id!==id);render();
+}
+document.getElementById('exportBtn').onclick=()=>{
+  const rows=[['Date','Job #','Job','Work Minutes','Travel Minutes Added','Total Minutes']];
+  state.jobs.forEach(j=>rows.push([state.date,j.number,j.name,Math.round((j.workMs||0)/60000),Math.round((j.travelMs||0)/60000),Math.round(((j.workMs||0)+(j.travelMs||0))/60000)]));
+  const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='job-time-'+state.date+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+};
+
+document.getElementById('weekExportBtn').onclick=()=>{
+  const start=document.getElementById('weekStart').value;
+  if(!start){alert('Choose the start date of the week.');return}
+  const end=new Date(start+'T12:00:00');end.setDate(end.getDate()+6);
+  const endKey=end.toISOString().slice(0,10);
+  const days=(state.archived||[]).filter(d=>d.date>=start&&d.date<=endKey).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!days.length){alert('No completed days are saved in that 7-day period.');return}
+  const rows=[['Date','Job #','Job','Work Minutes','Travel Minutes Added','Total Minutes']];
+  days.forEach(d=>d.jobs.forEach(j=>rows.push([d.date,j.number,j.name,Math.round((j.workMs||0)/60000),Math.round((j.travelMs||0)/60000),Math.round(((j.workMs||0)+(j.travelMs||0))/60000)])));
+  const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='job-time-week-'+start+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+};
+setInterval(()=>{document.getElementById('liveTimer').textContent=state.current?fmt(elapsedForCurrent()):'00:00:00';renderJobs();const t=totals();document.getElementById('totalJob').textContent=fmt(t.job);document.getElementById('totalTravel').textContent=fmt(t.travel);document.getElementById('totalPaid').textContent=fmt(t.job+t.travel)},1000);
+document.addEventListener('visibilitychange',()=>{render()});
+window.addEventListener('focus',()=>render());
+render();
+</script>
+</body>
+</html>
